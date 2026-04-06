@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const predictionResult = document.getElementById('prediction-result');
     const predictionNumbers = document.querySelector('.prediction-numbers');
     const predictionMethod = document.getElementById('prediction-method');
+    const generateAllButton = document.getElementById('generate-all-btn');
     
     if (predictionForm) {
         predictionForm.addEventListener('submit', function(e) {
@@ -41,6 +42,62 @@ document.addEventListener('DOMContentLoaded', function() {
                 submitButton.disabled = false;
             });
         });
+
+        if (generateAllButton) {
+            generateAllButton.addEventListener('click', function() {
+                const formData = new FormData(predictionForm);
+                const submitButton = predictionForm.querySelector('button[type="submit"]');
+                const submitOriginalText = submitButton.textContent;
+                const allOriginalText = generateAllButton.textContent;
+
+                submitButton.disabled = true;
+                generateAllButton.disabled = true;
+                generateAllButton.innerHTML = '<span class="loading"></span> Generating all...';
+
+                fetch('/predict_all', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.success) {
+                        const errorText = (data.errors || []).map(e => `${e.method}: ${e.error}`).join('; ');
+                        showNotification('Error generating all predictions' + (errorText ? `: ${errorText}` : ''), 'error');
+                        return;
+                    }
+
+                    const generated = Array.isArray(data.generated) ? data.generated : [];
+                    const autoResult = generated.find(item => item.requested_method === 'auto') || generated[0];
+                    if (autoResult && Array.isArray(autoResult.numbers)) {
+                        displayPrediction(
+                            autoResult.numbers,
+                            autoResult.resolved_method || autoResult.requested_method || 'auto',
+                            data.target_draw_at,
+                            autoResult.confidence
+                        );
+                    }
+
+                    const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+                    const message = errorCount > 0
+                        ? `Generated ${generated.length} methods (${errorCount} failed).`
+                        : `Generated all ${generated.length} prediction methods.`;
+                    showNotification(message, errorCount > 0 ? 'error' : 'success');
+
+                    // Refresh quickly so "Recent Predictions" table updates.
+                    setTimeout(() => window.location.reload(), 500);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    showNotification('Network error occurred', 'error');
+                })
+                .finally(() => {
+                    submitButton.disabled = false;
+                    generateAllButton.disabled = false;
+                    submitButton.textContent = submitOriginalText;
+                    generateAllButton.textContent = allOriginalText;
+                });
+            });
+        }
     }
     
     function displayPrediction(numbers, method, targetDrawAt, confidence) {

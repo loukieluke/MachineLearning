@@ -23,8 +23,8 @@ class LotteryPredictor:
             self.number_frequency = Counter(self.df['numbers'])
             self._analyze_patterns()
 
-            # Train ML models if we have enough data
-            numbers_list = self.df['numbers'].tolist()
+            # Train ML models if we have enough data (chronological order)
+            numbers_list = self._numbers_chronological()
             if train_models and len(numbers_list) >= 20:
                 # Train Random Forest
                 rf_trained = self.rf_predictor.train(numbers_list) # Store the result
@@ -46,18 +46,27 @@ class LotteryPredictor:
             self.last_draws = []
             self.rf_trained = False # No data, so RF not trained
 
+    def _numbers_chronological(self):
+        """
+        Draws from the DB are newest-first (ORDER BY date DESC).
+        All sequence models and transition counts need oldest → newest.
+        """
+        if self.df is None or self.df.empty:
+            return []
+        return [int(x) for x in self.df['numbers'].iloc[::-1].tolist()]
+
     def _analyze_patterns(self):
         """Analyze patterns in the historical data"""
         self.patterns = defaultdict(Counter)
-        self.last_draws = self.df['numbers'].tolist()[-20:] #Last 20 draws
+        numbers_chron = self._numbers_chronological()
+        self.last_draws = numbers_chron[-20:] if numbers_chron else []
 
-        if len(self.df) < 2:
+        if len(numbers_chron) < 2:
             return
-        
-        # Look for numbers that frequently follow other numbers
-        for i in range(1, len(self.df)):
-            prev_num = self.df.iloc[i-1]['numbers']
-            current_num = self.df.iloc[i]['numbers']
+
+        for i in range(1, len(numbers_chron)):
+            prev_num = numbers_chron[i - 1]
+            current_num = numbers_chron[i]
             self.patterns[prev_num][current_num] += 1
 
     def predict(self, method='ml_lstm', count=5, target_draw_at=None):
@@ -106,7 +115,8 @@ class LotteryPredictor:
             numbers,
             method_to_use,
             target_draw_at=target_draw_at,
-            confidence=self.last_prediction_confidence
+            confidence=self.last_prediction_confidence,
+            requested_method=method,
         )
         return sorted([int(num) for num in numbers])
 
@@ -691,7 +701,7 @@ class LotteryPredictor:
                 self.ml_loaded = True
 
                 # Also retrain Random Forest
-                numbers_list = self.df['numbers'].tolist()
+                numbers_list = self._numbers_chronological()
                 if len(numbers_list) >= 20:
                     rf_success = self.rf_predictor.train(numbers_list)
                     self.rf_trained = rf_success

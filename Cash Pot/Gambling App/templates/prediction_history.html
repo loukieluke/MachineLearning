@@ -23,6 +23,16 @@
     These pairs are used to evaluate methods and weight the ensemble.
 </p>
 
+{% set method_labels = {
+    'ml_lstm': 'ML: LSTM Neural Network',
+    'ml_rf': 'ML: Random Forest',
+    'ensemble': 'Ensemble (All Methods)',
+    'weighted': 'Weighted (Frequency-based)',
+    'pattern': 'Pattern-based',
+    'hot': 'Hot Numbers',
+    'random': 'Random',
+} %}
+
 {% if accuracy_summary and accuracy_summary.total_predictions %}
 <div class="card mb-4">
     <div class="card-header">
@@ -107,7 +117,15 @@
                                 {{ row.target_draw_at[:16] if row.target_draw_at else '—' }}
                             {% endif %}
                         </td>
-                        <td>{{ row.method }}</td>
+                        <td>
+                            {% set req = row.requested_method if row.get('requested_method') is not none else none %}
+                            {% if req == 'auto' %}
+                                <strong>Auto (Best Available)</strong>
+                                <br><small class="text-muted">→ {{ method_labels.get(row.method, row.method) }}</small>
+                            {% else %}
+                                {{ method_labels.get(row.method, row.method) }}
+                            {% endif %}
+                        </td>
                         <td>
                             {% if row.confidence is not none and row.confidence == row.confidence %}
                                 {% if row.confidence_band == 'high' %}

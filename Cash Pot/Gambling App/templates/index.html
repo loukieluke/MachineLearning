@@ -33,7 +33,10 @@
                             </select>
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary btn-lg">Generate Prediction</button>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg">Generate Prediction</button>
+                        <button type="button" class="btn btn-outline-primary btn-lg" id="generate-all-btn">Generate All Predictions</button>
+                    </div>
                 </form>
 
                 <div id="prediction-result" class="mt-4" style="display: none;">
@@ -46,10 +49,11 @@
             </div>
         </div>
 
-        {% if recent_predictions is defined and not recent_predictions.empty %}
+        {% if prediction_dashboard_rows is defined and prediction_dashboard_rows %}
         <div class="card mt-4">
             <div class="card-header">
                 <h5>Recent Predictions</h5>
+                <p class="mb-0 small text-muted">Latest run per method (same order as the form). Generate once with each method to fill every row.</p>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -65,14 +69,19 @@
                             </tr>
                         </thead>
                         <tbody>
-                            {% for _, pred in recent_predictions.iterrows() %}
-                            <tr>
-                                <td>{{ pred.created_at[:16] if pred.created_at else '—' }}</td>
-                                <td>{{ pred.target_draw_at[:16] if pred.target_draw_at else '—' }}</td>
-                                <td>{{ pred.method }}</td>
+                            {% for row in prediction_dashboard_rows %}
+                            <tr class="{% if not row.has_data %}table-light text-muted{% endif %}">
+                                <td>{% if row.has_data and row.created_at %}{{ row.created_at[:16] }}{% else %}—{% endif %}</td>
+                                <td>{% if row.has_data and row.target_draw_at %}{{ row.target_draw_at[:16] }}{% else %}—{% endif %}</td>
                                 <td>
-                                    {% if pred.confidence is not none and pred.confidence == pred.confidence %}
-                                        {% set c = pred.confidence %}
+                                    {{ row.method_label }}
+                                    {% if row.row_key == 'auto' and row.has_data and row.resolved_label %}
+                                        <br><small class="text-muted">→ {{ row.resolved_label }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.has_data and row.confidence is not none and row.confidence == row.confidence %}
+                                        {% set c = row.confidence %}
                                         {% if c < 0.45 %}
                                             <span class="badge bg-secondary">Low ({{ (c*100)|round(0)|int }}%)</span>
                                         {% elif c < 0.65 %}
@@ -84,8 +93,8 @@
                                         <span class="text-muted">—</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ pred.predicted_numbers }}</td>
-                                <td>{% if pred.actual_number is not none and pred.actual_number == pred.actual_number %}#{{ pred.actual_number|int }}{% else %}—{% endif %}</td>
+                                <td>{% if row.has_data and row.predicted_numbers %}{{ row.predicted_numbers }}{% else %}—{% endif %}</td>
+                                <td>{% if row.has_data and row.actual_number is not none and row.actual_number == row.actual_number %}#{{ row.actual_number|int }}{% else %}—{% endif %}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

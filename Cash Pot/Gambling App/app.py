@@ -61,13 +61,13 @@ _last_training_message = None  # optional detail message
 @app.route('/')
 def index():
     stats = predictor.get_stats()
-    recent_predictions = db.get_recent_predictions(5)
+    prediction_dashboard_rows = db.get_prediction_dashboard_rows()
     accuracy_summary = db.get_prediction_accuracy_summary()
     benchmark_baseline = db.get_latest_benchmark()
     return render_template(
         'index.html',
         stats=stats,
-        recent_predictions=recent_predictions,
+        prediction_dashboard_rows=prediction_dashboard_rows,
         accuracy_summary=accuracy_summary,
         benchmark_baseline=benchmark_baseline,
         startup_training_enabled=startup_training_enabled,
@@ -75,6 +75,7 @@ def index():
     )
 
 ALLOWED_COUNTS = (3, 5, 7, 10)
+ALL_PREDICTION_METHODS = ('auto', 'ml_lstm', 'ml_rf', 'ensemble', 'weighted', 'pattern', 'hot', 'random')
 
 @app.route('/predict', methods=['POST'])
 def predict_numbers():
@@ -104,6 +105,40 @@ def predict_numbers():
             'success': False,
             'error': str(e)
         })
+
+@app.route('/predict_all', methods=['POST'])
+def predict_all_numbers():
+    """Generate predictions for all methods in one action."""
+    try:
+        count = int(request.form.get('count', 5))
+    except (TypeError, ValueError):
+        count = 5
+    if count not in ALLOWED_COUNTS:
+        count = 5
+
+    target_draw_at = format_target_draw_at(get_next_draw_datetime())
+    results = []
+    errors = []
+
+    for method in ALL_PREDICTION_METHODS:
+        try:
+            numbers = predictor.predict(method, count, target_draw_at=target_draw_at)
+            results.append({
+                'requested_method': method,
+                'resolved_method': predictor.last_prediction_method or method,
+                'confidence': predictor.last_prediction_confidence,
+                'numbers': [int(num) for num in numbers],
+            })
+        except Exception as e:
+            errors.append({'method': method, 'error': str(e)})
+
+    return jsonify({
+        'success': len(results) > 0,
+        'count': count,
+        'target_draw_at': target_draw_at,
+        'generated': results,
+        'errors': errors,
+    })
     
 @app.route('/upload', methods=['GET', 'POST'])
 def upload_csv():

@@ -52,7 +52,12 @@ class DatabaseManager:
                     lstm_mean REAL)''')
 
         # Add new columns if they don't exist (for existing databases)
-        for col, spec in [('target_draw_at', 'TEXT'), ('confidence', 'REAL'), ('actual_draw_id', 'INTEGER REFERENCES draws(id)')]:
+        for col, spec in [
+            ('target_draw_at', 'TEXT'),
+            ('confidence', 'REAL'),
+            ('actual_draw_id', 'INTEGER REFERENCES draws(id)'),
+            ('requested_method', 'TEXT'),
+        ]:
             try:
                 c.execute(f'ALTER TABLE predictions ADD COLUMN {col} {spec}')
             except sqlite3.OperationalError:
@@ -161,17 +166,20 @@ class DatabaseManager:
         conn.close()
         return updated
 
-    def save_prediction(self, numbers, method, target_draw_at=None, confidence=None):
+    def save_prediction(self, numbers, method, target_draw_at=None, confidence=None, requested_method=None):
         """Save a prediction to the database with optional target draw datetime.
+        method = resolved engine; requested_method = dropdown choice (e.g. 'auto' vs resolved 'ensemble').
         created_at is stored in Jamaica time (America/Jamaica)."""
         from schedule import JAMAICA
         created_at = datetime.now(JAMAICA).strftime("%Y-%m-%d %H:%M:%S")
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
         numbers_str = ','.join(map(str, numbers))
-        c.execute('''INSERT INTO predictions (predicted_numbers, method, target_draw_at, confidence, created_at)
-                      VALUES (?, ?, ?, ?, ?)''',
-                  (numbers_str, method, target_draw_at, confidence, created_at))
+        c.execute(
+            '''INSERT INTO predictions (predicted_numbers, method, target_draw_at, confidence, created_at, requested_method)
+                      VALUES (?, ?, ?, ?, ?, ?)''',
+            (numbers_str, method, target_draw_at, confidence, created_at, requested_method),
+        )
         conn.commit()
         conn.close()
 
@@ -188,6 +196,94 @@ class DatabaseManager:
         conn.close()
         return df
 
+    def get_prediction_dashboard_rows(self):
+        """
+        One row per prediction method for the home dashboard: latest saved prediction for each
+        method key, plus a dedicated row for Auto (requested_method='auto').
+        Rows without any saved prediction yet show empty placeholders.
+        """
+        method_labels = {
+            'ml_lstm': 'ML: LSTM Neural Network',
+            'ml_rf': 'ML: Random Forest',
+            'ensemble': 'Ensemble (All Methods)',
+            'weighted': 'Weighted (Frequency-based)',
+            'pattern': 'Pattern-based',
+            'hot': 'Hot Numbers',
+            'random': 'Random',
+        }
+
+        def _clean_scalar(val):
+            if val is None:
+                return None
+            if isinstance(val, float) and pd.isna(val):
+                return None
+            return val
+
+        conn = sqlite3.connect(self.db_path)
+        # (row_key, display_label, sql_extra, params) — row_key 'auto' uses requested_method
+        specs = [
+            ('auto', 'Auto (Best Available)', 'p.requested_method = ?', ('auto',)),
+            ('ml_lstm', 'ML: LSTM Neural Network', 'p.method = ?', ('ml_lstm',)),
+            ('ml_rf', 'ML: Random Forest', 'p.method = ?', ('ml_rf',)),
+            ('ensemble', 'Ensemble (All Methods)', 'p.method = ?', ('ensemble',)),
+            ('weighted', 'Weighted (Frequency-based)', 'p.method = ?', ('weighted',)),
+            ('pattern', 'Pattern-based', 'p.method = ?', ('pattern',)),
+            ('hot', 'Hot Numbers', 'p.method = ?', ('hot',)),
+            ('random', 'Random', 'p.method = ?', ('random',)),
+        ]
+        rows = []
+        for row_key, label, where_sql, params in specs:
+            df = pd.read_sql(
+                f'''
+                SELECT p.id, p.predicted_numbers, p.method, p.target_draw_at, p.actual_draw_id,
+                       p.confidence, p.created_at, d.numbers AS actual_number
+                FROM predictions p
+                LEFT JOIN draws d ON p.actual_draw_id = d.id
+                WHERE {where_sql}
+                ORDER BY p.id DESC
+                LIMIT 1
+                ''',
+                conn,
+                params=params,
+            )
+            if df is None or df.empty:
+                rows.append(
+                    {
+                        'row_key': row_key,
+                        'method_label': label,
+                        'has_data': False,
+                        'created_at': None,
+                        'target_draw_at': None,
+                        'resolved_method': None,
+                        'confidence': None,
+                        'predicted_numbers': None,
+                        'actual_number': None,
+                    }
+                )
+            else:
+                r = df.iloc[0]
+                resolved = _clean_scalar(r.get('method'))
+                conf = _clean_scalar(r.get('confidence'))
+                actual = r.get('actual_number')
+                if actual is not None and isinstance(actual, float) and pd.isna(actual):
+                    actual = None
+                rows.append(
+                    {
+                        'row_key': row_key,
+                        'method_label': label,
+                        'has_data': True,
+                        'created_at': r.get('created_at'),
+                        'target_draw_at': r.get('target_draw_at'),
+                        'resolved_method': resolved,
+                        'resolved_label': method_labels.get(resolved, resolved),
+                        'confidence': conf,
+                        'predicted_numbers': r.get('predicted_numbers'),
+                        'actual_number': actual,
+                    }
+                )
+        conn.close()
+        return rows
+
     def get_prediction_history(self, limit=200):
         """Return recent predictions joined to their actual draws (if linked). Used for History page."""
         conn = sqlite3.connect(self.db_path)
@@ -196,6 +292,7 @@ class DatabaseManager:
             SELECT
                 p.id,
                 p.method,
+                p.requested_method,
                 p.predicted_numbers,
                 p.target_draw_at,
                 p.confidence,
@@ -233,6 +330,7 @@ class DatabaseManager:
             SELECT
                 p.id,
                 p.method,
+                p.requested_method,
                 p.predicted_numbers,
                 p.target_draw_at,
                 p.confidence,

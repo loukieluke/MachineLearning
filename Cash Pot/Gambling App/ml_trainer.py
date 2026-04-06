@@ -55,7 +55,8 @@ class LotteryMLTrainer:
     
     def train_models(self, df, force_retrain=False):
         """Train LSTM next-number classifier."""
-        numbers = df['numbers'].tolist()
+        # DB rows are typically newest-first; sequences must be oldest → newest.
+        numbers = df['numbers'].iloc[::-1].tolist()
 
         if len(numbers) < 20: # Need minimum data
             print("Insufficient data for training. Need at least 20 draws.")
