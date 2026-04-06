@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h4>Generate Prediction</h4>
+            </div>
+            <div class="card-body">
+                <form id="prediction-form">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Prediction Method:</label>
+                            <select class="form-select" name="method" id="method">
+                                <option value="auto" selected>Auto (Best Available)</option>
+                                <option value="ml_lstm">ML: LSTM Neural Network</option>
+                                <option value="ml_rf">ML: Random Forest</option>
+                                <option value="ensemble">Ensemble (All Methods)</option>
+                                <option value="weighted">Weighted (Frequency-based)</option>
+                                <option value="pattern">Pattern-based</option>
+                                <option value="hot">Hot Numbers</option>
+                                <option value="random">Random</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Number of Predictions:</label>
+                            <select class="form-select" name="count" id="count">
+                                <option value="3">3 numbers</option>
+                                <option value="5" selected>5 numbers</option>
+                                <option value="7">7 numbers</option>
+                                <option value="10">10 numbers</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="submit" class="btn btn-primary btn-lg">Generate Prediction</button>
+                        <button type="button" class="btn btn-outline-primary btn-lg" id="generate-all-btn">Generate All Predictions</button>
+                    </div>
+                </form>
+
+                <div id="prediction-result" class="mt-4" style="display: none;">
+                    <h4>Predicted Numbers:</h4>
+                    <div class="prediction-numbers"></div>
+                    <p class="mb-0 mt-2"><small class="text-muted" id="prediction-method"></small></p>
+                    <p class="mb-0"><small class="text-muted" id="prediction-confidence"></small></p>
+                    <p class="mb-0"><small class="text-muted" id="prediction-target-draw"></small></p>
+                </div>
+            </div>
+        </div>
+
+        {% if prediction_dashboard_rows is defined and prediction_dashboard_rows %}
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>Recent Predictions</h5>
+                <p class="mb-0 small text-muted">Latest run per method (same order as the form). Generate once with each method to fill every row.</p>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Created</th>
+                                <th>For draw</th>
+                                <th>Method</th>
+                                <th>Confidence</th>
+                                <th>Numbers</th>
+                                <th>Actual</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in prediction_dashboard_rows %}
+                            <tr class="{% if not row.has_data %}table-light text-muted{% endif %}">
+                                <td>{% if row.has_data and row.created_at %}{{ row.created_at[:16] }}{% else %}—{% endif %}</td>
+                                <td>{% if row.has_data and row.target_draw_at %}{{ row.target_draw_at[:16] }}{% else %}—{% endif %}</td>
+                                <td>
+                                    {{ row.method_label }}
+                                    {% if row.row_key == 'auto' and row.has_data and row.resolved_label %}
+                                        <br><small class="text-muted">→ {{ row.resolved_label }}</small>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.has_data and row.confidence is not none and row.confidence == row.confidence %}
+                                        {% set c = row.confidence %}
+                                        {% if c < 0.45 %}
+                                            <span class="badge bg-secondary">Low ({{ (c*100)|round(0)|int }}%)</span>
+                                        {% elif c < 0.65 %}
+                                            <span class="badge bg-warning text-dark">Medium ({{ (c*100)|round(0)|int }}%)</span>
+                                        {% else %}
+                                            <span class="badge bg-success">High ({{ (c*100)|round(0)|int }}%)</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="text-muted">—</span>
+                                    {% endif %}
+                                </td>
+                                <td>{% if row.has_data and row.predicted_numbers %}{{ row.predicted_numbers }}{% else %}—{% endif %}</td>
+                                <td>{% if row.has_data and row.actual_number is not none and row.actual_number == row.actual_number %}#{{ row.actual_number|int }}{% else %}—{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5>Statistics</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Total Draws:</strong> {{ stats.total_draws }}</p>
+                <p><strong>Date Range:</strong> {{ stats.date_range }}</p>
+
+                {% if stats.most_frequent %}
+                <p><strong>Most Frequent Numbers:</strong></p>
+                <ul>
+                    {% for num, freq in stats.most_frequent %}
+                    <li>#{{ num }} ({{ freq }} times)</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+
+                <!-- Add model status display -->
+                <div class="mt-3">
+                    <div id="model-status" class="alert alert-info">
+                        <small>Loading model status...</small>
+                    </div>
+                </div>
+                <div class="mt-2">
+                    <div id="monitor-health-status" class="alert alert-secondary py-2 mb-2">
+                        <small>Monitoring health: loading...</small>
+                    </div>
+                </div>
+                <div class="mt-2">
+                    {% if startup_training_enabled %}
+                        <div class="alert alert-success py-2 mb-2">
+                            <small><strong>Startup training:</strong> Enabled ({{ startup_training_reason }})</small>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-warning py-2 mb-2">
+                            <small><strong>Startup training:</strong> Disabled ({{ startup_training_reason }})</small>
+                        </div>
+                    {% endif %}
+                </div>
+
+                <!-- Add retrain button -->
+                <div class="mt-2">
+                    <form action="{{ url_for('retrain_models') }}" method="POST" class="d-inline" id="retrain-form">
+                        <button type="submit" class="btn btn-warning btn-sm" id="retrain-btn">Force Retrain ML Models</button>
+                    </form>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <a href="{{ url_for('upload_csv') }}" class="btn btn-outline-primary">Upload New Data</a>
+                    <a href="{{ url_for('history') }}" class="btn btn-outline-secondary">View All History</a>
+                </div>
+            </div>
+        </div>
+
+        {% if accuracy_summary and accuracy_summary.total_predictions %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5>Prediction Accuracy</h5>
+            </div>
+            <div class="card-body">
+                <p class="mb-1">
+                    <strong>Overall:</strong>
+                    {% if accuracy_summary.overall_hit_rate is not none %}
+                        {{ (accuracy_summary.overall_hit_rate * 100) | round(1) }}%
+                        ({{ accuracy_summary.total_hits }} hits /
+                         {{ accuracy_summary.total_predictions }} predictions)
+                    {% else %}
+                        Not enough linked predictions yet.
+                    {% endif %}
+                </p>
+
+                {% if accuracy_summary.per_method %}
+                <p class="mb-1"><strong>By method:</strong></p>
+                <ul class="mb-0">
+                    {% for method, m in accuracy_summary.per_method.items() %}
+                    <li>
+                        {{ method }}:
+                        {% if m.hit_rate is not none %}
+                            {{ (m.hit_rate * 100) | round(1) }}%
+                            ({{ m.hits }} / {{ m.total }})
+                        {% else %}
+                            Not enough data yet.
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if benchmark_baseline %}
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5>Benchmark Baseline</h5>
+            </div>
+            <div class="card-body">
+                <p class="mb-1">
+                    <strong>Decision:</strong>
+                    {% if benchmark_baseline.decision == 'promote' %}
+                        <span class="badge bg-success">Promote</span>
+                    {% else %}
+                        <span class="badge bg-secondary">Hold</span>
+                    {% endif %}
+                </p>
+                <p class="mb-1">
+                    <strong>Ensemble mean:</strong>
+                    {% if benchmark_baseline.ensemble_mean is not none %}
+                        {{ (benchmark_baseline.ensemble_mean * 100) | round(2) }}%
+                    {% else %}
+                        —
+                    {% endif %}
+                </p>
+                <p class="mb-1">
+                    <strong>Ensemble std:</strong>
+                    {% if benchmark_baseline.ensemble_std is not none %}
+                        {{ (benchmark_baseline.ensemble_std * 100) | round(2) }}%
+                    {% else %}
+                        —
+                    {% endif %}
+                </p>
+                <p class="mb-0 text-muted">
+                    <small>{{ benchmark_baseline.created_at }}</small>
+                </p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
